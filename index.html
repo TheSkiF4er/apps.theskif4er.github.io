@@ -23,10 +23,31 @@
     <header class="page-header">
       <div>
         <h1>5.8GHz FPV Frequency Table</h1>
-        <p>Нажимайте на числовые ячейки, чтобы отмечать их красным цветом.</p>
+        <p>Выберите цвет и нажимайте на числовые ячейки. Заголовки Band и CH не нажимаются.</p>
       </div>
       <button id="reset-button" class="reset-button" type="button">Сбросить отметки</button>
     </header>
+
+    <section class="controls-panel">
+      <div class="control-card">
+        <label for="color-picker" class="control-label">Текущий цвет</label>
+        <div class="color-row">
+          <input id="color-picker" type="color" value="#d32f2f" />
+          <input id="color-hex" type="text" value="#D32F2F" maxlength="7" spellcheck="false" />
+          <div id="current-color-preview" class="current-color-preview" aria-hidden="true"></div>
+        </div>
+        <p class="control-hint">Если нажать на уже отмеченную ячейку тем же цветом, отметка снимется.</p>
+      </div>
+
+      <div class="control-card">
+        <label for="legend-text" class="control-label">Подпись для выбранного цвета</label>
+        <div class="legend-add-row">
+          <input id="legend-text" type="text" placeholder="Например: Свободно / Занято / Моя частота" />
+          <button id="add-legend-button" type="button">Сохранить подпись</button>
+        </div>
+        <p class="control-hint">Под таблицей можно редактировать подписи для каждого цвета.</p>
+      </div>
+    </section>
 
     <div class="table-wrap">
       <table class="freq-table">
@@ -146,6 +167,18 @@
         </tbody>
       </table>
     </div>
+
+    <section class="legend-panel">
+      <div class="legend-header">
+        <div>
+          <h2>Легенда цветов</h2>
+          <p>Здесь можно подписывать, что означает каждый цвет.</p>
+        </div>
+        <button id="clear-legend-button" class="secondary-button" type="button">Очистить легенду</button>
+      </div>
+      <div id="legend-list" class="legend-list"></div>
+      <p id="legend-empty" class="legend-empty">Пока нет подписей. Выберите цвет, напишите текст и нажмите «Сохранить подпись».</p>
+    </section>
   </main>
 
   <script src="script.js"></script>
