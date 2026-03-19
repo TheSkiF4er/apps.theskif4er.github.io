@@ -3,6 +3,7 @@ import { APP_CONFIG } from './config.js';
 
 const DEFAULT_COLOR = normalizeHex(APP_CONFIG.defaultColor) || '#D32F2F';
 const SESSION_KEY = 'fpv-table-password-hash';
+const APP_TITLE = String(APP_CONFIG.appTitle || 'FPV 5.8 GHz Table').trim() || 'FPV 5.8 GHz Table';
 
 const BANDS = [
   { key: 'A', label: 'Band - A', channels: [5865, 5845, 5825, 5805, 5785, 5765, 5745, 5725] },
@@ -36,6 +37,7 @@ const refs = {
   appScreen: document.getElementById('app-screen'),
   pageTitle: document.getElementById('page-title'),
   appTitle: document.getElementById('app-title'),
+  footerTitle: document.getElementById('footer-title'),
   syncStatus: document.getElementById('sync-status'),
   colorPicker: document.getElementById('color-picker'),
   colorHex: document.getElementById('color-hex'),
@@ -58,12 +60,42 @@ document.addEventListener('DOMContentLoaded', init);
 function setVisibility(element, isVisible) {
   if (!element) return;
   element.hidden = !isVisible;
+  element.setAttribute('aria-hidden', String(!isVisible));
   element.style.display = isVisible ? '' : 'none';
 }
 
+function setScreen(screen) {
+  document.body.dataset.screen = screen;
+  setVisibility(refs.setupCard, screen === 'setup');
+  setVisibility(refs.loginScreen, screen === 'login');
+  setVisibility(refs.appScreen, screen === 'app');
+
+  if (screen === 'login') {
+    window.requestAnimationFrame(() => refs.passwordInput?.focus());
+  }
+
+  if (screen === 'app') {
+    hideLoginError();
+    refs.loginForm?.reset();
+    refs.passwordInput?.blur();
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  }
+}
+
+function applyAppTitle() {
+  document.title = APP_TITLE;
+
+  [refs.pageTitle, refs.appTitle, refs.footerTitle].forEach((node) => {
+    if (node) node.textContent = APP_TITLE;
+  });
+
+  document.querySelectorAll('[data-app-title]').forEach((node) => {
+    node.textContent = APP_TITLE;
+  });
+}
+
 async function init() {
-  refs.pageTitle.textContent = APP_CONFIG.appTitle || 'FPV 5.8 GHz Table';
-  refs.appTitle.textContent = APP_CONFIG.appTitle || 'FPV 5.8 GHz Table';
+  applyAppTitle();
   buildTable();
   buildMobileCards();
   bindEvents();
@@ -113,9 +145,7 @@ function isConfigured() {
 }
 
 function showSetup(message) {
-  setVisibility(refs.setupCard, true);
-  setVisibility(refs.loginScreen, false);
-  setVisibility(refs.appScreen, false);
+  setScreen('setup');
 
   if (message) {
     const note = document.createElement('p');
@@ -126,19 +156,11 @@ function showSetup(message) {
 }
 
 function showLogin() {
-  setVisibility(refs.setupCard, false);
-  setVisibility(refs.loginScreen, true);
-  setVisibility(refs.appScreen, false);
-  refs.passwordInput.focus();
+  setScreen('login');
 }
 
 function showApp() {
-  hideLoginError();
-  refs.passwordInput.value = '';
-  setVisibility(refs.setupCard, false);
-  setVisibility(refs.loginScreen, false);
-  setVisibility(refs.appScreen, true);
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  setScreen('app');
 }
 
 function bindEvents() {
@@ -361,10 +383,19 @@ function hideLoginError() {
 
 async function enterApp() {
   showApp();
-  await Promise.all([loadMarks(), loadLegend()]);
-  renderAll();
-  subscribeRealtime();
-  setSyncStatus('Онлайн', 'online');
+  applyAppTitle();
+
+  try {
+    await Promise.all([loadMarks(), loadLegend()]);
+    renderAll();
+    subscribeRealtime();
+    setSyncStatus('Онлайн', 'online');
+  } catch (error) {
+    console.error(error);
+    renderAll();
+    setSyncStatus('Нет связи', 'offline');
+    showMessage('Таблица открыта, но не удалось загрузить данные из базы.', 'error');
+  }
 }
 
 async function loadMarks() {

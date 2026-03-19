@@ -38,6 +38,15 @@ body {
     linear-gradient(180deg, var(--bg), #080c11 70%);
 }
 
+body[data-screen='setup'] #login-screen,
+body[data-screen='setup'] #app-screen,
+body[data-screen='login'] #setup-card,
+body[data-screen='login'] #app-screen,
+body[data-screen='app'] #setup-card,
+body[data-screen='app'] #login-screen {
+  display: none !important;
+}
+
 button,
 input {
   font: inherit;
@@ -121,6 +130,11 @@ ol {
 
 .login-card {
   width: min(100%, 480px);
+}
+
+.app-screen {
+  display: grid;
+  gap: 20px;
 }
 
 .login-topline,
@@ -531,23 +545,35 @@ ol {
 
 .site-footer {
   padding: 18px 22px;
+  background: rgba(255, 255, 255, 0.035);
 }
 
 .site-footer__inner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 16px;
+  align-items: start;
 }
 
-.site-footer__inner strong {
+.site-footer__primary,
+.site-footer__meta {
+  min-width: 0;
+}
+
+.site-footer__title {
   display: inline-block;
   margin-bottom: 6px;
-  font-size: 16px;
+  font-size: 18px;
+  line-height: 1.2;
 }
 
 .site-footer__inner p {
   margin-bottom: 0;
+  overflow-wrap: anywhere;
+}
+
+.site-footer__meta {
+  text-align: right;
 }
 
 @media (max-width: 720px) {
@@ -556,7 +582,10 @@ ol {
   }
 
   .site-footer__inner {
-    flex-direction: column;
-    align-items: flex-start;
+    grid-template-columns: 1fr;
+  }
+
+  .site-footer__meta {
+    text-align: left;
   }
 }
