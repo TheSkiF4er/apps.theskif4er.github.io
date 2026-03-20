@@ -49,6 +49,7 @@ const refs = {
   accessRoleBadge: document.getElementById('access-role-badge'),
   accessModeText: document.getElementById('access-mode-text'),
   appScreen: document.getElementById('app-screen'),
+  controlsGrid: document.getElementById('controls-grid'),
   pageTitle: document.getElementById('page-title'),
   appTitle: document.getElementById('app-title'),
   footerTitle: document.getElementById('footer-title'),
@@ -68,6 +69,7 @@ const refs = {
   tableBody: document.getElementById('table-body'),
   mobileBandList: document.getElementById('mobile-band-list'),
   minGapInput: document.getElementById('min-gap-input'),
+  frequencyToolbar: document.getElementById('frequency-toolbar'),
   editFrequenciesButton: document.getElementById('edit-frequencies-button'),
   saveFrequenciesButton: document.getElementById('save-frequencies-button'),
   cancelFrequenciesButton: document.getElementById('cancel-frequencies-button'),
@@ -77,6 +79,7 @@ const refs = {
   noteTitleInput: document.getElementById('note-title-input'),
   noteTextInput: document.getElementById('note-text-input'),
   addNoteButton: document.getElementById('add-note-button'),
+  notesForm: document.getElementById('notes-form'),
   notesList: document.getElementById('notes-list'),
   notesEmpty: document.getElementById('notes-empty'),
 };
@@ -126,7 +129,7 @@ function getAccessRoleMeta(role) {
   if (role === 'viewer') {
     return {
       badge: 'Пользователь',
-      description: 'Режим просмотра: все информационные блоки доступны, редактирование закрыто.',
+      description: 'Режим просмотра: доступны только информационные блоки, недоступные формы скрыты автоматически.',
     };
   }
 
@@ -162,6 +165,9 @@ function applyAccessMode() {
   if (refs.noteTitleInput) refs.noteTitleInput.disabled = !admin;
   if (refs.noteTextInput) refs.noteTextInput.disabled = !admin;
   if (refs.addNoteButton) refs.addNoteButton.disabled = !admin;
+  if (refs.controlsGrid) refs.controlsGrid.hidden = !admin;
+  if (refs.frequencyToolbar) refs.frequencyToolbar.hidden = !admin;
+  if (refs.notesForm) refs.notesForm.hidden = !admin;
 }
 
 async function resolveAccessRole(accessKey) {

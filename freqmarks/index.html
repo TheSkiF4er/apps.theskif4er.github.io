@@ -43,6 +43,9 @@
         </form>
 
         <p id="login-error" class="inline-message error" hidden></p>
+        <p class="muted small">
+          По умолчанию в SQL-файле заданы ключи: администратор <code>fpv58</code>, пользователь <code>fpv29</code>. Их можно заменить.
+        </p>
       </div>
     </section>
 
@@ -69,7 +72,7 @@
         </div>
       </header>
 
-      <section class="controls-grid">
+      <section id="controls-grid" class="controls-grid">
         <article class="panel-card">
           <label for="color-picker" class="field-label">Текущий цвет</label>
           <div class="color-row">
@@ -107,7 +110,7 @@
           </div>
         </div>
 
-        <div class="frequency-toolbar">
+        <div id="frequency-toolbar" class="frequency-toolbar">
           <label class="field frequency-gap-field">
             <span class="field-label">Минимальный шаг между частотами</span>
             <input id="min-gap-input" class="text-input" type="number" min="100" step="1" value="100" disabled />
@@ -164,7 +167,7 @@
           </div>
         </div>
 
-        <div class="notes-form stack gap-16">
+        <div id="notes-form" class="notes-form stack gap-16">
           <label class="field">
             <span class="field-label">Заголовок заметки</span>
             <input id="note-title-input" class="text-input" type="text" placeholder="Например: Подготовка к выезду" />
