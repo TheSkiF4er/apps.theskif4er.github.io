@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Частотные отметки</title>
-  <link rel="stylesheet" href="./styles.css?v=20260320a" />
+  <link rel="stylesheet" href="./styles.css?v=20260320b" />
 </head>
 <body data-screen="login">
   <main class="page-shell">
@@ -19,7 +19,7 @@
         <li>Создайте бесплатный проект Supabase.</li>
         <li>Выполните SQL из <code>supabase-schema.sql</code>.</li>
         <li>Вставьте URL и Anon Key в <code>config.js</code>.</li>
-        <li>При желании смените пароль через файл <code>password-hash.html</code>.</li>
+        <li>При желании смените ключи через SHA-256 и обновите значения в <code>supabase-schema.sql</code>.</li>
       </ol>
     </section>
 
@@ -31,20 +31,20 @@
         </div>
         <h1 id="page-title" data-app-title>Частотные отметки</h1>
         <p class="muted">
-          Чтобы открыть таблицу, введите пароль страницы. После входа отметки, частоты, заметки и легенда цветов будут синхронизироваться через онлайн-базу.
+          Чтобы открыть страницу, введите ключ администратора или пользователя. Администратор может редактировать все блоки, пользователь видит все данные только для просмотра.
         </p>
 
         <form id="login-form" class="stack gap-16">
           <label class="field">
-            <span class="field-label">Пароль</span>
-            <input id="password-input" class="text-input" type="password" placeholder="Введите пароль" autocomplete="current-password" />
+            <span class="field-label">Ключ доступа</span>
+            <input id="password-input" class="text-input" type="password" placeholder="Введите ключ администратора или пользователя" autocomplete="current-password" />
           </label>
-          <button id="login-button" class="primary-button" type="submit">Открыть таблицу</button>
+          <button id="login-button" class="primary-button" type="submit">Открыть страницу</button>
         </form>
 
         <p id="login-error" class="inline-message error" hidden></p>
         <p class="muted small">
-          По умолчанию в SQL-файле уже задан пароль <code>fpv58</code>. Его можно заменить.
+          По умолчанию в SQL-файле заданы ключи: администратор <code>fpv58</code>, пользователь <code>fpv58-view</code>. Их можно заменить.
         </p>
       </div>
     </section>
@@ -54,6 +54,7 @@
         <div class="stack gap-12">
           <div class="header-topline">
             <span id="sync-status" class="pill">Подключение...</span>
+            <span id="access-role-badge" class="pill subtle">Гость</span>
             <span class="pill subtle">Supabase Realtime</span>
           </div>
           <div>
@@ -61,6 +62,7 @@
             <p class="muted">
               Нажимайте только на числовые ячейки. Цвет выбирается сверху. Одинаковые данные будут видны на разных устройствах.
             </p>
+            <p id="access-mode-text" class="muted small">Введите ключ пользователя или администратора, чтобы открыть страницу.</p>
           </div>
         </div>
 
@@ -79,7 +81,7 @@
             <div id="current-color-preview" class="current-color-preview" aria-hidden="true"></div>
           </div>
           <p class="muted small">
-            Если нажать на уже отмеченную ячейку тем же цветом, отметка снимется.
+            Если нажать на уже отмеченную ячейку тем же цветом, отметка снимется. В режиме пользователя блок доступен только для просмотра.
           </p>
         </article>
 
@@ -90,7 +92,7 @@
             <button id="add-legend-button" class="primary-button" type="button">Сохранить</button>
           </div>
           <p class="muted small">
-            Под таблицей можно менять и удалять подписи цветов. Изменения тоже синхронизируются.
+            Под таблицей можно менять и удалять подписи цветов. Изменения синхронизируются. В режиме пользователя доступен только просмотр.
           </p>
         </article>
       </section>
@@ -161,7 +163,7 @@
         <div class="section-heading">
           <div>
             <h2>Заметки</h2>
-            <p class="muted small">Новые заметки сохраняются в базу. Существующие можно редактировать и удалять.</p>
+            <p class="muted small">Новые заметки сохраняются в базу. Существующие можно редактировать и удалять только под ключом администратора.</p>
           </div>
         </div>
 
@@ -199,6 +201,6 @@
     </section>
   </main>
 
-  <script type="module" src="./app.js?v=20260320a"></script>
+  <script type="module" src="./app.js?v=20260320b"></script>
 </body>
 </html>

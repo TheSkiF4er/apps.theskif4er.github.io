@@ -2,7 +2,8 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 import { APP_CONFIG } from './config.js';
 
 const DEFAULT_COLOR = normalizeHex(APP_CONFIG.defaultColor) || '#D32F2F';
-const SESSION_KEY = 'fpv-table-password-hash';
+const SESSION_KEY = 'fpv-table-access-session';
+const ADMIN_HEADER_NAME = 'x-freqmarks-access-key';
 const APP_TITLE = String(APP_CONFIG.appTitle || 'Частотные отметки').trim() || 'Частотные отметки';
 
 const DEFAULT_BANDS = [
@@ -19,7 +20,8 @@ const DEFAULT_BANDS = [
 
 const state = {
   supabase: null,
-  passwordHash: '',
+  accessRole: '',
+  adminSupabase: null,
   selectedColor: DEFAULT_COLOR,
   marks: {},
   legend: {},
@@ -44,6 +46,8 @@ const refs = {
   loginButton: document.getElementById('login-button'),
   passwordInput: document.getElementById('password-input'),
   loginError: document.getElementById('login-error'),
+  accessRoleBadge: document.getElementById('access-role-badge'),
+  accessModeText: document.getElementById('access-mode-text'),
   appScreen: document.getElementById('app-screen'),
   pageTitle: document.getElementById('page-title'),
   appTitle: document.getElementById('app-title'),
@@ -78,6 +82,118 @@ const refs = {
 };
 
 document.addEventListener('DOMContentLoaded', init);
+
+function createSupabaseClient(headers = {}) {
+  return createClient(APP_CONFIG.supabaseUrl, APP_CONFIG.supabaseAnonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+    global: {
+      headers,
+    },
+  });
+}
+
+function readAccessSession() {
+  try {
+    return JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null');
+  } catch {
+    return null;
+  }
+}
+
+function saveAccessSession(accessKey, role) {
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify({ accessKey, role }));
+}
+
+function clearAccessSession() {
+  sessionStorage.removeItem(SESSION_KEY);
+  state.accessRole = '';
+  state.adminSupabase = null;
+  applyAccessMode();
+}
+
+function getAccessRoleMeta(role) {
+  if (role === 'admin') {
+    return {
+      badge: 'Администратор',
+      description: 'Режим администратора: можно менять отметки, легенду, частоты и заметки.',
+    };
+  }
+
+  if (role === 'viewer') {
+    return {
+      badge: 'Пользователь',
+      description: 'Режим просмотра: все информационные блоки доступны, редактирование закрыто.',
+    };
+  }
+
+  return {
+    badge: 'Гость',
+    description: 'Введите ключ пользователя или администратора, чтобы открыть страницу.',
+  };
+}
+
+function isAdmin() {
+  return state.accessRole === 'admin';
+}
+
+function applyAccessMode() {
+  const role = state.accessRole || 'guest';
+  const meta = getAccessRoleMeta(state.accessRole);
+  document.body.dataset.role = role;
+
+  if (refs.accessRoleBadge) refs.accessRoleBadge.textContent = meta.badge;
+  if (refs.accessModeText) refs.accessModeText.textContent = meta.description;
+
+  const admin = isAdmin();
+  if (refs.colorPicker) refs.colorPicker.disabled = !admin;
+  if (refs.colorHex) refs.colorHex.disabled = !admin;
+  if (refs.legendText) refs.legendText.disabled = !admin;
+  if (refs.addLegendButton) refs.addLegendButton.disabled = !admin;
+  if (refs.resetButton) refs.resetButton.hidden = !admin;
+  if (refs.clearLegendButton) refs.clearLegendButton.hidden = !admin;
+  if (refs.editFrequenciesButton) refs.editFrequenciesButton.hidden = !admin || state.editingFrequencies;
+  if (refs.saveFrequenciesButton) refs.saveFrequenciesButton.hidden = !admin || !state.editingFrequencies;
+  if (refs.cancelFrequenciesButton) refs.cancelFrequenciesButton.hidden = !state.editingFrequencies;
+  if (refs.minGapInput) refs.minGapInput.disabled = !admin || !state.editingFrequencies;
+  if (refs.noteTitleInput) refs.noteTitleInput.disabled = !admin;
+  if (refs.noteTextInput) refs.noteTextInput.disabled = !admin;
+  if (refs.addNoteButton) refs.addNoteButton.disabled = !admin;
+}
+
+async function resolveAccessRole(accessKey) {
+  const { data, error } = await state.supabase.rpc('check_access_key', { attempt_key: accessKey });
+  if (error) throw error;
+
+  const role = String(data || '').trim().toLowerCase();
+  return role === 'admin' || role === 'viewer' ? role : '';
+}
+
+function applyAccessSession(accessKey, role, { persist = true } = {}) {
+  state.accessRole = role;
+  state.adminSupabase = role === 'admin'
+    ? createSupabaseClient({ [ADMIN_HEADER_NAME]: accessKey })
+    : null;
+
+  if (role !== 'admin') {
+    state.editingFrequencies = false;
+    state.editedBands = null;
+    state.editingNoteId = null;
+    state.noteDraft = null;
+  }
+
+  if (persist) saveAccessSession(accessKey, role);
+  applyAccessMode();
+}
+
+function requireAdminAccess() {
+  if (isAdmin() && state.adminSupabase) return true;
+  showMessage('Режим пользователя: редактирование доступно только по ключу администратора.', 'error');
+  return false;
+}
 
 function setVisibility(element, isVisible) {
   if (!element) return;
@@ -123,38 +239,37 @@ async function init() {
   setSelectedColor(state.selectedColor);
   renderFrequencyEditor();
   renderNotes();
+  applyAccessMode();
 
   if (!isConfigured()) {
     showSetup();
     return;
   }
 
-  state.supabase = createClient(APP_CONFIG.supabaseUrl, APP_CONFIG.supabaseAnonKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-    },
-  });
+  state.supabase = createSupabaseClient();
 
   showLogin();
   setSyncStatus('Проверка настроек...', 'loading');
 
-  try {
-    state.passwordHash = await fetchPasswordHash();
-  } catch (error) {
-    console.error(error);
-    showSetup('Не удалось получить пароль из базы. Проверьте config.js и выполните supabase-schema.sql.');
-    return;
+  const savedSession = readAccessSession();
+
+  if (savedSession?.accessKey) {
+    try {
+      const role = await resolveAccessRole(savedSession.accessKey);
+      if (role) {
+        applyAccessSession(savedSession.accessKey, role, { persist: false });
+        await enterApp();
+        return;
+      }
+      clearAccessSession();
+    } catch (error) {
+      console.error(error);
+      showSetup('Не удалось проверить ключ доступа. Проверьте config.js и выполните обновлённый supabase-schema.sql.');
+      return;
+    }
   }
 
-  const savedHash = sessionStorage.getItem(SESSION_KEY);
-
-  if (savedHash && savedHash === state.passwordHash) {
-    await enterApp();
-  } else {
-    setSyncStatus('Ожидание входа', 'loading');
-  }
+  setSyncStatus('Ожидание входа', 'loading');
 }
 
 function isConfigured() {
@@ -238,7 +353,7 @@ function bindEvents() {
   });
 
   refs.logoutButton.addEventListener('click', () => {
-    sessionStorage.removeItem(SESSION_KEY);
+    clearAccessSession();
     unsubscribeRealtime();
     state.marks = {};
     state.legend = {};
@@ -246,6 +361,7 @@ function bindEvents() {
     state.editingFrequencies = false;
     state.editingNoteId = null;
     state.noteDraft = null;
+    applyAccessMode();
     renderAll();
     showLogin();
     setSyncStatus('Ожидание входа', 'loading');
@@ -392,25 +508,13 @@ async function sha256(text) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-async function fetchPasswordHash() {
-  const { data, error } = await state.supabase
-    .from('page_access')
-    .select('password_hash')
-    .eq('id', 1)
-    .maybeSingle();
-
-  if (error) throw error;
-  if (!data?.password_hash) throw new Error('Row page_access(id=1) not found');
-  return String(data.password_hash).trim().toLowerCase();
-}
-
 async function handleLogin(event) {
   event.preventDefault();
   hideLoginError();
 
-  const password = refs.passwordInput.value.trim();
-  if (!password) {
-    showLoginError('Введите пароль.');
+  const accessKey = refs.passwordInput.value.trim();
+  if (!accessKey) {
+    showLoginError('Введите ключ доступа.');
     return;
   }
 
@@ -418,22 +522,22 @@ async function handleLogin(event) {
   refs.loginButton.textContent = 'Проверка...';
 
   try {
-    const enteredHash = await sha256(password);
+    const role = await resolveAccessRole(accessKey);
 
-    if (enteredHash !== state.passwordHash) {
-      showLoginError('Неверный пароль.');
+    if (!role) {
+      showLoginError('Неверный ключ доступа.');
       return;
     }
 
-    sessionStorage.setItem(SESSION_KEY, enteredHash);
+    applyAccessSession(accessKey, role);
     refs.passwordInput.value = '';
     await enterApp();
   } catch (error) {
     console.error(error);
-    showLoginError('Не удалось проверить пароль. Проверьте подключение к базе.');
+    showLoginError('Не удалось проверить ключ доступа. Проверьте подключение к базе.');
   } finally {
     refs.loginButton.disabled = false;
-    refs.loginButton.textContent = 'Открыть таблицу';
+    refs.loginButton.textContent = 'Открыть страницу';
   }
 }
 
@@ -633,12 +737,15 @@ function setSyncStatus(text, kind) {
 }
 
 async function toggleCell(cellId) {
+  if (!requireAdminAccess()) return;
+
   const currentColor = state.marks[cellId];
   const nextColor = currentColor === state.selectedColor ? '' : state.selectedColor;
+  const writeClient = state.adminSupabase;
 
   try {
     if (nextColor) {
-      const { error } = await state.supabase
+      const { error } = await writeClient
         .from('cell_marks')
         .upsert({ cell_id: cellId, color: nextColor }, { onConflict: 'cell_id' });
 
@@ -647,7 +754,7 @@ async function toggleCell(cellId) {
       renderMarks();
       showMessage('Отметка сохранена.', 'success');
     } else {
-      const { error } = await state.supabase
+      const { error } = await writeClient
         .from('cell_marks')
         .delete()
         .eq('cell_id', cellId);
@@ -664,6 +771,8 @@ async function toggleCell(cellId) {
 }
 
 async function saveLegendFromForm() {
+  if (!requireAdminAccess()) return;
+
   const color = normalizeHex(state.selectedColor);
   const label = refs.legendText.value.trim();
 
@@ -678,7 +787,7 @@ async function saveLegendFromForm() {
   }
 
   try {
-    const { error } = await state.supabase
+    const { error } = await state.adminSupabase
       .from('legend_items')
       .upsert({ color, label }, { onConflict: 'color' });
 
@@ -696,6 +805,8 @@ async function saveLegendFromForm() {
 }
 
 async function saveLegend(color, label) {
+  if (!requireAdminAccess()) return;
+
   try {
     const normalizedColor = normalizeHex(color);
     const preparedLabel = String(label || '').trim();
@@ -710,7 +821,7 @@ async function saveLegend(color, label) {
       return;
     }
 
-    const { error } = await state.supabase
+    const { error } = await state.adminSupabase
       .from('legend_items')
       .upsert({ color: normalizedColor, label: preparedLabel }, { onConflict: 'color' });
 
@@ -726,8 +837,10 @@ async function saveLegend(color, label) {
 }
 
 async function deleteLegend(color) {
+  if (!requireAdminAccess()) return;
+
   try {
-    const { error } = await state.supabase
+    const { error } = await state.adminSupabase
       .from('legend_items')
       .delete()
       .eq('color', color);
@@ -744,8 +857,10 @@ async function deleteLegend(color) {
 }
 
 async function clearLegend() {
+  if (!requireAdminAccess()) return;
+
   try {
-    const { error } = await state.supabase
+    const { error } = await state.adminSupabase
       .from('legend_items')
       .delete()
       .neq('color', '#000000');
@@ -762,8 +877,10 @@ async function clearLegend() {
 }
 
 async function clearAllMarks() {
+  if (!requireAdminAccess()) return;
+
   try {
-    const { error } = await state.supabase
+    const { error } = await state.adminSupabase
       .from('cell_marks')
       .delete()
       .neq('cell_id', '__none__');
@@ -779,6 +896,8 @@ async function clearAllMarks() {
 }
 
 function startFrequencyEditing() {
+  if (!requireAdminAccess()) return;
+
   state.editingFrequencies = true;
   state.editedBands = cloneBands(state.bands);
   state.editedMinGap = state.settings.minFrequencyGap;
@@ -787,6 +906,7 @@ function startFrequencyEditing() {
 
 function cancelFrequencyEditing() {
   state.editingFrequencies = false;
+  applyAccessMode();
   state.editedBands = null;
   state.editedMinGap = state.settings.minFrequencyGap;
   renderFrequencyEditor();
@@ -855,6 +975,7 @@ function getFrequencyRowsFromBands(bands) {
 }
 
 async function saveFrequencies() {
+  if (!requireAdminAccess()) return;
   if (!state.editingFrequencies || !state.editedBands) return;
 
   const validationError = validateFrequencyDraft(state.editedBands, refs.minGapInput.value);
@@ -871,10 +992,10 @@ async function saveFrequencies() {
 
   try {
     const [channelsResult, settingsResult] = await Promise.all([
-      state.supabase
+      state.adminSupabase
         .from('band_channels')
         .upsert(getFrequencyRowsFromBands(normalizedBands), { onConflict: 'band_key,channel_number' }),
-      state.supabase
+      state.adminSupabase
         .from('app_settings')
         .upsert({ id: 1, min_frequency_gap: minGap }, { onConflict: 'id' }),
     ]);
@@ -897,17 +1018,20 @@ async function saveFrequencies() {
 }
 
 function renderFrequencyEditor() {
-  refs.editFrequenciesButton.hidden = state.editingFrequencies;
-  refs.saveFrequenciesButton.hidden = !state.editingFrequencies;
+  const admin = isAdmin();
+  refs.editFrequenciesButton.hidden = !admin || state.editingFrequencies;
+  refs.saveFrequenciesButton.hidden = !admin || !state.editingFrequencies;
   refs.cancelFrequenciesButton.hidden = !state.editingFrequencies;
-  refs.frequencyEditor.hidden = !state.editingFrequencies;
+  refs.frequencyEditor.hidden = !admin || !state.editingFrequencies;
 
   const currentMinGap = state.editingFrequencies ? state.editedMinGap : state.settings.minFrequencyGap;
-  refs.minGapInput.disabled = !state.editingFrequencies;
+  refs.minGapInput.disabled = !admin || !state.editingFrequencies;
   refs.minGapInput.value = String(currentMinGap ?? state.settings.minFrequencyGap ?? 100);
 
   if (!state.editingFrequencies) {
-    refs.frequencySummary.textContent = `Текущий минимальный шаг между частотами: ${state.settings.minFrequencyGap}. Для изменения откройте редактор.`;
+    refs.frequencySummary.textContent = admin
+      ? `Текущий минимальный шаг между частотами: ${state.settings.minFrequencyGap}. Для изменения откройте редактор.`
+      : `Текущий минимальный шаг между частотами: ${state.settings.minFrequencyGap}. Редактирование доступно только администратору.`;
     refs.frequencyBandEditor.innerHTML = '';
     return;
   }
@@ -956,6 +1080,8 @@ function renderFrequencyEditor() {
 }
 
 async function saveNoteFromForm() {
+  if (!requireAdminAccess()) return;
+
   const title = refs.noteTitleInput.value.trim();
   const content = refs.noteTextInput.value.trim();
 
@@ -972,7 +1098,7 @@ async function saveNoteFromForm() {
   refs.addNoteButton.disabled = true;
 
   try {
-    const { error } = await state.supabase
+    const { error } = await state.adminSupabase
       .from('notes')
       .insert({ title, content });
 
@@ -992,6 +1118,8 @@ async function saveNoteFromForm() {
 }
 
 function startEditingNote(noteId) {
+  if (!requireAdminAccess()) return;
+
   const note = state.notes.find((item) => item.id === noteId);
   if (!note) return;
 
@@ -1010,6 +1138,7 @@ function cancelEditingNote() {
 }
 
 async function saveEditedNote(noteId) {
+  if (!requireAdminAccess()) return;
   if (state.editingNoteId !== noteId || !state.noteDraft) return;
 
   const title = String(state.noteDraft.title || '').trim();
@@ -1026,7 +1155,7 @@ async function saveEditedNote(noteId) {
   }
 
   try {
-    const { error } = await state.supabase
+    const { error } = await state.adminSupabase
       .from('notes')
       .update({ title, content })
       .eq('id', noteId);
@@ -1051,11 +1180,13 @@ async function saveEditedNote(noteId) {
 }
 
 async function deleteNote(noteId) {
+  if (!requireAdminAccess()) return;
+
   const ok = window.confirm('Удалить заметку?');
   if (!ok) return;
 
   try {
-    const { error } = await state.supabase
+    const { error } = await state.adminSupabase
       .from('notes')
       .delete()
       .eq('id', noteId);
@@ -1091,6 +1222,7 @@ function formatDateTime(value) {
 }
 
 function renderAll() {
+  applyAccessMode();
   renderMarks();
   renderLegend();
   renderFrequencyEditor();
@@ -1107,6 +1239,7 @@ function renderMarks() {
 
     nodes.forEach((node) => {
       node.title = title;
+      node.classList.toggle('read-only-cell', !isAdmin());
       if (color) {
         node.classList.add('active-cell');
         node.style.backgroundColor = color;
@@ -1124,6 +1257,7 @@ function renderMarks() {
 
 function renderLegend() {
   const entries = Object.entries(state.legend).sort((a, b) => a[0].localeCompare(b[0]));
+  const admin = isAdmin();
   refs.legendList.innerHTML = '';
   refs.legendEmpty.hidden = entries.length > 0;
 
@@ -1135,8 +1269,10 @@ function renderLegend() {
     colorButton.type = 'button';
     colorButton.className = 'legend-color-box';
     colorButton.style.backgroundColor = color;
-    colorButton.title = 'Выбрать этот цвет';
+    colorButton.title = admin ? 'Выбрать этот цвет' : 'Цвет из легенды';
+    colorButton.disabled = !admin;
     colorButton.addEventListener('click', () => {
+      if (!admin) return;
       setSelectedColor(color);
       refs.legendText.value = label;
     });
@@ -1144,6 +1280,15 @@ function renderLegend() {
     const code = document.createElement('div');
     code.className = 'legend-code';
     code.textContent = color;
+
+    if (!admin) {
+      const readonlyLabel = document.createElement('div');
+      readonlyLabel.className = 'legend-label-text';
+      readonlyLabel.textContent = label;
+      item.append(colorButton, code, readonlyLabel);
+      refs.legendList.append(item);
+      return;
+    }
 
     const input = document.createElement('input');
     input.className = 'text-input';
@@ -1176,6 +1321,7 @@ function renderLegend() {
 }
 
 function renderNotes() {
+  const admin = isAdmin();
   refs.notesList.innerHTML = '';
   refs.notesEmpty.hidden = state.notes.length > 0;
 
@@ -1183,7 +1329,7 @@ function renderNotes() {
     const item = document.createElement('article');
     item.className = 'note-item';
 
-    if (state.editingNoteId === note.id && state.noteDraft) {
+    if (admin && state.editingNoteId === note.id && state.noteDraft) {
       const titleField = document.createElement('label');
       titleField.className = 'field';
       titleField.innerHTML = '<span class="field-label">Заголовок</span>';
@@ -1241,23 +1387,27 @@ function renderNotes() {
     updated.textContent = `Обновлено: ${formatDateTime(note.updatedAt || note.createdAt)}`;
     titleBox.append(title, updated);
 
-    const actions = document.createElement('div');
-    actions.className = 'note-actions';
+    if (admin) {
+      const actions = document.createElement('div');
+      actions.className = 'note-actions';
 
-    const editButton = document.createElement('button');
-    editButton.type = 'button';
-    editButton.className = 'secondary-button';
-    editButton.textContent = 'Редактировать';
-    editButton.addEventListener('click', () => startEditingNote(note.id));
+      const editButton = document.createElement('button');
+      editButton.type = 'button';
+      editButton.className = 'secondary-button';
+      editButton.textContent = 'Редактировать';
+      editButton.addEventListener('click', () => startEditingNote(note.id));
 
-    const deleteButton = document.createElement('button');
-    deleteButton.type = 'button';
-    deleteButton.className = 'ghost-button';
-    deleteButton.textContent = 'Удалить';
-    deleteButton.addEventListener('click', () => deleteNote(note.id));
+      const deleteButton = document.createElement('button');
+      deleteButton.type = 'button';
+      deleteButton.className = 'ghost-button';
+      deleteButton.textContent = 'Удалить';
+      deleteButton.addEventListener('click', () => deleteNote(note.id));
 
-    actions.append(editButton, deleteButton);
-    meta.append(titleBox, actions);
+      actions.append(editButton, deleteButton);
+      meta.append(titleBox, actions);
+    } else {
+      meta.append(titleBox);
+    }
 
     const content = document.createElement('p');
     content.className = 'note-content';
