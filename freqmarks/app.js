@@ -5,14 +5,14 @@ const DEFAULT_COLOR = normalizeHex(APP_CONFIG.defaultColor) || '#D32F2F';
 const SESSION_KEY = 'fpv-table-password-hash';
 const APP_TITLE = String(APP_CONFIG.appTitle || 'Частотные отметки').trim() || 'Частотные отметки';
 
-const BANDS = [
+const DEFAULT_BANDS = [
   { key: 'A', label: 'Band - A', channels: [5865, 5845, 5825, 5805, 5785, 5765, 5745, 5725] },
-  { key: 'B', label: 'Band - b', channels: [5733, 5752, 5771, 5790, 5809, 5828, 5847, 5866] },
+  { key: 'B', label: 'Band - B', channels: [5733, 5752, 5771, 5790, 5809, 5828, 5847, 5866] },
   { key: 'E', label: 'Band - E', channels: [5705, 5685, 5665, 5645, 5885, 5905, 5925, 5945] },
   { key: 'F', label: 'Band - F', channels: [5740, 5760, 5780, 5800, 5820, 5840, 5860, 5880] },
-  { key: 'R', label: 'Band - r', channels: [5658, 5695, 5732, 5769, 5806, 5843, 5880, 5917] },
+  { key: 'R', label: 'Band - R', channels: [5658, 5695, 5732, 5769, 5806, 5843, 5880, 5917] },
   { key: 'U', label: 'Band - U', channels: [5325, 5348, 5366, 5384, 5402, 5420, 5438, 5456] },
-  { key: 'O', label: 'Band - o', channels: [5474, 5492, 5510, 5528, 5546, 5564, 5582, 5600] },
+  { key: 'O', label: 'Band - O', channels: [5474, 5492, 5510, 5528, 5546, 5564, 5582, 5600] },
   { key: 'L', label: 'Band - L', channels: [5333, 5373, 5413, 5453, 5493, 5533, 5573, 5613] },
   { key: 'H', label: 'Band - H', channels: [5653, 5693, 5733, 5773, 5813, 5853, 5893, 5933] },
 ];
@@ -23,8 +23,18 @@ const state = {
   selectedColor: DEFAULT_COLOR,
   marks: {},
   legend: {},
+  bands: cloneBands(DEFAULT_BANDS),
+  settings: {
+    minFrequencyGap: 100,
+  },
+  notes: [],
   cellNodes: new Map(),
   channels: [],
+  editingFrequencies: false,
+  editedBands: null,
+  editedMinGap: 100,
+  editingNoteId: null,
+  noteDraft: null,
 };
 
 const refs = {
@@ -53,6 +63,18 @@ const refs = {
   tableHead: document.getElementById('table-head'),
   tableBody: document.getElementById('table-body'),
   mobileBandList: document.getElementById('mobile-band-list'),
+  minGapInput: document.getElementById('min-gap-input'),
+  editFrequenciesButton: document.getElementById('edit-frequencies-button'),
+  saveFrequenciesButton: document.getElementById('save-frequencies-button'),
+  cancelFrequenciesButton: document.getElementById('cancel-frequencies-button'),
+  frequencyEditor: document.getElementById('frequency-editor'),
+  frequencyBandEditor: document.getElementById('frequency-band-editor'),
+  frequencySummary: document.getElementById('frequency-summary'),
+  noteTitleInput: document.getElementById('note-title-input'),
+  noteTextInput: document.getElementById('note-text-input'),
+  addNoteButton: document.getElementById('add-note-button'),
+  notesList: document.getElementById('notes-list'),
+  notesEmpty: document.getElementById('notes-empty'),
 };
 
 document.addEventListener('DOMContentLoaded', init);
@@ -96,10 +118,11 @@ function applyAppTitle() {
 
 async function init() {
   applyAppTitle();
-  buildTable();
-  buildMobileCards();
+  rebuildFrequencyViews();
   bindEvents();
   setSelectedColor(state.selectedColor);
+  renderFrequencyEditor();
+  renderNotes();
 
   if (!isConfigured()) {
     showSetup();
@@ -147,12 +170,22 @@ function isConfigured() {
 function showSetup(message) {
   setScreen('setup');
 
-  if (message) {
-    const note = document.createElement('p');
-    note.className = 'inline-message error';
-    note.textContent = message;
-    refs.setupCard.append(note);
+  const existingMessage = refs.setupCard.querySelector('[data-setup-error]');
+  if (!message) {
+    existingMessage?.remove();
+    return;
   }
+
+  if (existingMessage) {
+    existingMessage.textContent = message;
+    return;
+  }
+
+  const note = document.createElement('p');
+  note.className = 'inline-message error';
+  note.dataset.setupError = 'true';
+  note.textContent = message;
+  refs.setupCard.append(note);
 }
 
 function showLogin() {
@@ -182,6 +215,16 @@ function bindEvents() {
     }
   });
 
+  refs.editFrequenciesButton.addEventListener('click', startFrequencyEditing);
+  refs.cancelFrequenciesButton.addEventListener('click', cancelFrequencyEditing);
+  refs.saveFrequenciesButton.addEventListener('click', saveFrequencies);
+  refs.minGapInput.addEventListener('input', () => {
+    if (!state.editingFrequencies) return;
+    state.editedMinGap = refs.minGapInput.value;
+  });
+
+  refs.addNoteButton.addEventListener('click', saveNoteFromForm);
+
   refs.resetButton.addEventListener('click', async () => {
     const ok = window.confirm('Удалить все отметки у ячеек?');
     if (!ok) return;
@@ -199,6 +242,10 @@ function bindEvents() {
     unsubscribeRealtime();
     state.marks = {};
     state.legend = {};
+    state.notes = [];
+    state.editingFrequencies = false;
+    state.editingNoteId = null;
+    state.noteDraft = null;
     renderAll();
     showLogin();
     setSyncStatus('Ожидание входа', 'loading');
@@ -208,13 +255,17 @@ function bindEvents() {
 }
 
 function buildTable() {
-  const headRow = document.createElement('tr');
-  headRow.innerHTML = '<th>Band</th>' + BANDS[0].channels.map((_, index) => `<th>CH ${index + 1}</th>`).join('');
-  refs.tableHead.append(headRow);
-
+  refs.tableHead.innerHTML = '';
   refs.tableBody.innerHTML = '';
 
-  BANDS.forEach((band) => {
+  const firstBand = state.bands[0];
+  if (!firstBand) return;
+
+  const headRow = document.createElement('tr');
+  headRow.innerHTML = '<th>Band</th>' + firstBand.channels.map((_, index) => `<th>CH ${index + 1}</th>`).join('');
+  refs.tableHead.append(headRow);
+
+  state.bands.forEach((band) => {
     const row = document.createElement('tr');
     const titleCell = document.createElement('th');
     titleCell.scope = 'row';
@@ -240,7 +291,7 @@ function buildTable() {
 function buildMobileCards() {
   refs.mobileBandList.innerHTML = '';
 
-  BANDS.forEach((band) => {
+  state.bands.forEach((band) => {
     const card = document.createElement('article');
     card.className = 'mobile-band-card';
 
@@ -251,7 +302,7 @@ function buildMobileCards() {
         <h3>${band.label}</h3>
         <p class="muted small">Нажимайте только на числовые кнопки</p>
       </div>
-      <span class="pill subtle">8 каналов</span>
+      <span class="pill subtle">${band.channels.length} каналов</span>
     `;
 
     const grid = document.createElement('div');
@@ -278,10 +329,25 @@ function buildMobileCards() {
   });
 }
 
+function rebuildFrequencyViews() {
+  state.cellNodes = new Map();
+  buildTable();
+  buildMobileCards();
+  renderMarks();
+}
+
 function registerCellNode(cellId, node) {
   const current = state.cellNodes.get(cellId) || [];
   current.push(node);
   state.cellNodes.set(cellId, current);
+}
+
+function cloneBands(bands) {
+  return (bands || []).map((band) => ({
+    key: band.key,
+    label: band.label,
+    channels: [...band.channels],
+  }));
 }
 
 function normalizeHex(value) {
@@ -386,16 +452,54 @@ async function enterApp() {
   applyAppTitle();
 
   try {
-    await Promise.all([loadMarks(), loadLegend()]);
+    await Promise.all([loadChannels(), loadSettings(), loadMarks(), loadLegend(), loadNotes()]);
+    rebuildFrequencyViews();
     renderAll();
     subscribeRealtime();
     setSyncStatus('Онлайн', 'online');
   } catch (error) {
     console.error(error);
+    rebuildFrequencyViews();
     renderAll();
     setSyncStatus('Нет связи', 'offline');
     showMessage('Таблица открыта, но не удалось загрузить данные из базы.', 'error');
   }
+}
+
+async function loadChannels() {
+  const { data, error } = await state.supabase
+    .from('band_channels')
+    .select('band_key, channel_number, frequency');
+
+  if (error) throw error;
+
+  const nextBands = cloneBands(DEFAULT_BANDS);
+  const bandMap = new Map(nextBands.map((band) => [band.key, band]));
+
+  (data || []).forEach((item) => {
+    const band = bandMap.get(String(item.band_key || '').trim());
+    const channelIndex = Number(item.channel_number) - 1;
+    const frequency = Number(item.frequency);
+    if (!band || channelIndex < 0 || channelIndex >= band.channels.length || !Number.isFinite(frequency)) {
+      return;
+    }
+    band.channels[channelIndex] = frequency;
+  });
+
+  state.bands = nextBands;
+}
+
+async function loadSettings() {
+  const { data, error } = await state.supabase
+    .from('app_settings')
+    .select('min_frequency_gap')
+    .eq('id', 1)
+    .maybeSingle();
+
+  if (error) throw error;
+
+  const minGap = Number(data?.min_frequency_gap);
+  state.settings.minFrequencyGap = Number.isFinite(minGap) && minGap >= 100 ? minGap : 100;
 }
 
 async function loadMarks() {
@@ -430,35 +534,71 @@ async function loadLegend() {
   });
 }
 
+async function loadNotes() {
+  const { data, error } = await state.supabase
+    .from('notes')
+    .select('id, title, content, created_at, updated_at')
+    .order('updated_at', { ascending: false });
+
+  if (error) throw error;
+
+  state.notes = (data || []).map((item) => ({
+    id: item.id,
+    title: String(item.title || ''),
+    content: String(item.content || ''),
+    createdAt: item.created_at,
+    updatedAt: item.updated_at,
+  }));
+}
+
 function subscribeRealtime() {
   unsubscribeRealtime();
 
   const marksChannel = state.supabase
     .channel('fpv-cell-marks')
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'cell_marks' },
-      async () => {
-        await loadMarks();
-        renderMarks();
-      }
-    )
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'cell_marks' }, async () => {
+      await loadMarks();
+      renderMarks();
+    })
     .subscribe(handleRealtimeStatus);
 
   const legendChannel = state.supabase
     .channel('fpv-legend-items')
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'legend_items' },
-      async () => {
-        await loadLegend();
-        renderLegend();
-        renderMarks();
-      }
-    )
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'legend_items' }, async () => {
+      await loadLegend();
+      renderLegend();
+      renderMarks();
+    })
     .subscribe(handleRealtimeStatus);
 
-  state.channels = [marksChannel, legendChannel];
+  const frequencyChannel = state.supabase
+    .channel('fpv-band-channels')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'band_channels' }, async () => {
+      await loadChannels();
+      if (!state.editingFrequencies) {
+        rebuildFrequencyViews();
+      }
+      renderFrequencyEditor();
+    })
+    .subscribe(handleRealtimeStatus);
+
+  const settingsChannel = state.supabase
+    .channel('fpv-app-settings')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'app_settings' }, async () => {
+      await loadSettings();
+      renderFrequencyEditor();
+    })
+    .subscribe(handleRealtimeStatus);
+
+  const notesChannel = state.supabase
+    .channel('fpv-notes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'notes' }, async () => {
+      await loadNotes();
+      renderNotes();
+    })
+    .subscribe(handleRealtimeStatus);
+
+  state.channels = [marksChannel, legendChannel, frequencyChannel, settingsChannel, notesChannel];
 }
 
 function unsubscribeRealtime() {
@@ -503,6 +643,8 @@ async function toggleCell(cellId) {
         .upsert({ cell_id: cellId, color: nextColor }, { onConflict: 'cell_id' });
 
       if (error) throw error;
+      state.marks[cellId] = nextColor;
+      renderMarks();
       showMessage('Отметка сохранена.', 'success');
     } else {
       const { error } = await state.supabase
@@ -511,6 +653,8 @@ async function toggleCell(cellId) {
         .eq('cell_id', cellId);
 
       if (error) throw error;
+      delete state.marks[cellId];
+      renderMarks();
       showMessage('Отметка снята.', 'success');
     }
   } catch (error) {
@@ -540,7 +684,10 @@ async function saveLegendFromForm() {
 
     if (error) throw error;
 
+    state.legend[color] = label;
     refs.legendText.value = '';
+    renderLegend();
+    renderMarks();
     showMessage('Легенда сохранена.', 'success');
   } catch (error) {
     console.error(error);
@@ -550,16 +697,27 @@ async function saveLegendFromForm() {
 
 async function saveLegend(color, label) {
   try {
-    if (!label.trim()) {
-      await deleteLegend(color);
+    const normalizedColor = normalizeHex(color);
+    const preparedLabel = String(label || '').trim();
+
+    if (!normalizedColor) {
+      showMessage('Некорректный цвет.', 'error');
+      return;
+    }
+
+    if (!preparedLabel) {
+      await deleteLegend(normalizedColor);
       return;
     }
 
     const { error } = await state.supabase
       .from('legend_items')
-      .upsert({ color, label: label.trim() }, { onConflict: 'color' });
+      .upsert({ color: normalizedColor, label: preparedLabel }, { onConflict: 'color' });
 
     if (error) throw error;
+    state.legend[normalizedColor] = preparedLabel;
+    renderLegend();
+    renderMarks();
     showMessage('Подпись обновлена.', 'success');
   } catch (error) {
     console.error(error);
@@ -575,6 +733,9 @@ async function deleteLegend(color) {
       .eq('color', color);
 
     if (error) throw error;
+    delete state.legend[color];
+    renderLegend();
+    renderMarks();
     showMessage('Подпись удалена.', 'success');
   } catch (error) {
     console.error(error);
@@ -590,6 +751,9 @@ async function clearLegend() {
       .neq('color', '#000000');
 
     if (error) throw error;
+    state.legend = {};
+    renderLegend();
+    renderMarks();
     showMessage('Легенда очищена.', 'success');
   } catch (error) {
     console.error(error);
@@ -605,6 +769,8 @@ async function clearAllMarks() {
       .neq('cell_id', '__none__');
 
     if (error) throw error;
+    state.marks = {};
+    renderMarks();
     showMessage('Все отметки удалены.', 'success');
   } catch (error) {
     console.error(error);
@@ -612,17 +778,332 @@ async function clearAllMarks() {
   }
 }
 
+function startFrequencyEditing() {
+  state.editingFrequencies = true;
+  state.editedBands = cloneBands(state.bands);
+  state.editedMinGap = state.settings.minFrequencyGap;
+  renderFrequencyEditor();
+}
+
+function cancelFrequencyEditing() {
+  state.editingFrequencies = false;
+  state.editedBands = null;
+  state.editedMinGap = state.settings.minFrequencyGap;
+  renderFrequencyEditor();
+}
+
+function handleFrequencyDraftChange(bandKey, channelNumber, value) {
+  if (!state.editingFrequencies || !state.editedBands) return;
+
+  const band = state.editedBands.find((item) => item.key === bandKey);
+  if (!band) return;
+
+  band.channels[channelNumber - 1] = value;
+}
+
+function validateFrequencyDraft(bands, minGapRaw) {
+  const minGap = Number(minGapRaw);
+
+  if (!Number.isInteger(minGap) || minGap < 100) {
+    return 'Минимальный шаг должен быть целым числом не меньше 100.';
+  }
+
+  const flattened = [];
+
+  for (const band of bands) {
+    for (let index = 0; index < band.channels.length; index += 1) {
+      const rawValue = band.channels[index];
+      const prepared = String(rawValue ?? '').trim();
+
+      if (!prepared) {
+        return `${band.label}, CH ${index + 1}: ячейка не может быть пустой.`;
+      }
+
+      const frequency = Number(prepared);
+      if (!Number.isInteger(frequency) || frequency <= 0) {
+        return `${band.label}, CH ${index + 1}: укажите целое положительное число.`;
+      }
+
+      flattened.push({
+        bandKey: band.key,
+        bandLabel: band.label,
+        channelNumber: index + 1,
+        frequency,
+      });
+    }
+  }
+
+  const sorted = [...flattened].sort((a, b) => a.frequency - b.frequency);
+  for (let index = 1; index < sorted.length; index += 1) {
+    const previous = sorted[index - 1];
+    const current = sorted[index];
+    const gap = current.frequency - previous.frequency;
+    if (gap < minGap) {
+      return `Недостаточный шаг: между ${previous.bandLabel} CH ${previous.channelNumber} (${previous.frequency}) и ${current.bandLabel} CH ${current.channelNumber} (${current.frequency}) только ${gap}. Нужно минимум ${minGap}.`;
+    }
+  }
+
+  return null;
+}
+
+function getFrequencyRowsFromBands(bands) {
+  return bands.flatMap((band) => band.channels.map((frequency, index) => ({
+    band_key: band.key,
+    channel_number: index + 1,
+    frequency: Number(frequency),
+  })));
+}
+
+async function saveFrequencies() {
+  if (!state.editingFrequencies || !state.editedBands) return;
+
+  const validationError = validateFrequencyDraft(state.editedBands, refs.minGapInput.value);
+  if (validationError) {
+    showMessage(validationError, 'error');
+    return;
+  }
+
+  const normalizedBands = cloneBands(state.editedBands).map((band) => ({
+    ...band,
+    channels: band.channels.map((value) => Number(String(value).trim())),
+  }));
+  const minGap = Number(refs.minGapInput.value);
+
+  try {
+    const [channelsResult, settingsResult] = await Promise.all([
+      state.supabase
+        .from('band_channels')
+        .upsert(getFrequencyRowsFromBands(normalizedBands), { onConflict: 'band_key,channel_number' }),
+      state.supabase
+        .from('app_settings')
+        .upsert({ id: 1, min_frequency_gap: minGap }, { onConflict: 'id' }),
+    ]);
+
+    if (channelsResult.error) throw channelsResult.error;
+    if (settingsResult.error) throw settingsResult.error;
+
+    state.bands = normalizedBands;
+    state.settings.minFrequencyGap = minGap;
+    state.editingFrequencies = false;
+    state.editedBands = null;
+    state.editedMinGap = minGap;
+    rebuildFrequencyViews();
+    renderFrequencyEditor();
+    showMessage('Частоты сохранены.', 'success');
+  } catch (error) {
+    console.error(error);
+    showMessage('Не удалось сохранить частоты.', 'error');
+  }
+}
+
+function renderFrequencyEditor() {
+  refs.editFrequenciesButton.hidden = state.editingFrequencies;
+  refs.saveFrequenciesButton.hidden = !state.editingFrequencies;
+  refs.cancelFrequenciesButton.hidden = !state.editingFrequencies;
+  refs.frequencyEditor.hidden = !state.editingFrequencies;
+
+  const currentMinGap = state.editingFrequencies ? state.editedMinGap : state.settings.minFrequencyGap;
+  refs.minGapInput.disabled = !state.editingFrequencies;
+  refs.minGapInput.value = String(currentMinGap ?? state.settings.minFrequencyGap ?? 100);
+
+  if (!state.editingFrequencies) {
+    refs.frequencySummary.textContent = `Текущий минимальный шаг между частотами: ${state.settings.minFrequencyGap}. Для изменения откройте редактор.`;
+    refs.frequencyBandEditor.innerHTML = '';
+    return;
+  }
+
+  refs.frequencySummary.textContent = 'Измените частоты, затем сохраните. Пустые ячейки и шаг меньше указанного значения не допускаются.';
+  refs.frequencyBandEditor.innerHTML = '';
+
+  (state.editedBands || []).forEach((band) => {
+    const card = document.createElement('article');
+    card.className = 'frequency-band-card';
+
+    const title = document.createElement('div');
+    title.innerHTML = `
+      <h3>${band.label}</h3>
+      <p class="muted small">Все значения сохраняются в общую базу.</p>
+    `;
+
+    const grid = document.createElement('div');
+    grid.className = 'frequency-input-grid';
+
+    band.channels.forEach((frequency, index) => {
+      const field = document.createElement('label');
+      field.className = 'frequency-input-item';
+
+      const label = document.createElement('span');
+      label.textContent = `CH ${index + 1}`;
+
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.className = 'text-input';
+      input.min = '1';
+      input.step = '1';
+      input.required = true;
+      input.value = String(frequency ?? '');
+      input.addEventListener('input', (event) => {
+        handleFrequencyDraftChange(band.key, index + 1, event.target.value);
+      });
+
+      field.append(label, input);
+      grid.append(field);
+    });
+
+    card.append(title, grid);
+    refs.frequencyBandEditor.append(card);
+  });
+}
+
+async function saveNoteFromForm() {
+  const title = refs.noteTitleInput.value.trim();
+  const content = refs.noteTextInput.value.trim();
+
+  if (!title) {
+    showMessage('Введите заголовок заметки.', 'error');
+    return;
+  }
+
+  if (!content) {
+    showMessage('Введите текст заметки.', 'error');
+    return;
+  }
+
+  refs.addNoteButton.disabled = true;
+
+  try {
+    const { error } = await state.supabase
+      .from('notes')
+      .insert({ title, content });
+
+    if (error) throw error;
+
+    refs.noteTitleInput.value = '';
+    refs.noteTextInput.value = '';
+    await loadNotes();
+    renderNotes();
+    showMessage('Заметка сохранена.', 'success');
+  } catch (error) {
+    console.error(error);
+    showMessage('Не удалось сохранить заметку.', 'error');
+  } finally {
+    refs.addNoteButton.disabled = false;
+  }
+}
+
+function startEditingNote(noteId) {
+  const note = state.notes.find((item) => item.id === noteId);
+  if (!note) return;
+
+  state.editingNoteId = noteId;
+  state.noteDraft = {
+    title: note.title,
+    content: note.content,
+  };
+  renderNotes();
+}
+
+function cancelEditingNote() {
+  state.editingNoteId = null;
+  state.noteDraft = null;
+  renderNotes();
+}
+
+async function saveEditedNote(noteId) {
+  if (state.editingNoteId !== noteId || !state.noteDraft) return;
+
+  const title = String(state.noteDraft.title || '').trim();
+  const content = String(state.noteDraft.content || '').trim();
+
+  if (!title) {
+    showMessage('Введите заголовок заметки.', 'error');
+    return;
+  }
+
+  if (!content) {
+    showMessage('Введите текст заметки.', 'error');
+    return;
+  }
+
+  try {
+    const { error } = await state.supabase
+      .from('notes')
+      .update({ title, content })
+      .eq('id', noteId);
+
+    if (error) throw error;
+
+    const note = state.notes.find((item) => item.id === noteId);
+    if (note) {
+      note.title = title;
+      note.content = content;
+      note.updatedAt = new Date().toISOString();
+    }
+
+    state.editingNoteId = null;
+    state.noteDraft = null;
+    renderNotes();
+    showMessage('Заметка обновлена.', 'success');
+  } catch (error) {
+    console.error(error);
+    showMessage('Не удалось обновить заметку.', 'error');
+  }
+}
+
+async function deleteNote(noteId) {
+  const ok = window.confirm('Удалить заметку?');
+  if (!ok) return;
+
+  try {
+    const { error } = await state.supabase
+      .from('notes')
+      .delete()
+      .eq('id', noteId);
+
+    if (error) throw error;
+
+    state.notes = state.notes.filter((item) => item.id !== noteId);
+    if (state.editingNoteId === noteId) {
+      state.editingNoteId = null;
+      state.noteDraft = null;
+    }
+    renderNotes();
+    showMessage('Заметка удалена.', 'success');
+  } catch (error) {
+    console.error(error);
+    showMessage('Не удалось удалить заметку.', 'error');
+  }
+}
+
+function formatDateTime(value) {
+  if (!value) return '';
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
 function renderAll() {
   renderMarks();
   renderLegend();
+  renderFrequencyEditor();
+  renderNotes();
 }
 
 function renderMarks() {
   state.cellNodes.forEach((nodes, cellId) => {
     const color = state.marks[cellId];
     const label = color ? state.legend[color] : '';
+    const frequency = getFrequencyByCellId(cellId);
     const textColor = color ? getReadableTextColor(color) : '';
-    const title = label ? `${getFrequencyByCellId(cellId)} — ${label}` : String(getFrequencyByCellId(cellId));
+    const title = label ? `${frequency} — ${label}` : String(frequency);
 
     nodes.forEach((node) => {
       node.title = title;
@@ -694,9 +1175,102 @@ function renderLegend() {
   });
 }
 
+function renderNotes() {
+  refs.notesList.innerHTML = '';
+  refs.notesEmpty.hidden = state.notes.length > 0;
+
+  state.notes.forEach((note) => {
+    const item = document.createElement('article');
+    item.className = 'note-item';
+
+    if (state.editingNoteId === note.id && state.noteDraft) {
+      const titleField = document.createElement('label');
+      titleField.className = 'field';
+      titleField.innerHTML = '<span class="field-label">Заголовок</span>';
+
+      const titleInput = document.createElement('input');
+      titleInput.type = 'text';
+      titleInput.className = 'text-input';
+      titleInput.value = state.noteDraft.title;
+      titleInput.addEventListener('input', (event) => {
+        state.noteDraft.title = event.target.value;
+      });
+      titleField.append(titleInput);
+
+      const contentField = document.createElement('label');
+      contentField.className = 'field';
+      contentField.innerHTML = '<span class="field-label">Текст</span>';
+
+      const contentInput = document.createElement('textarea');
+      contentInput.className = 'text-input note-textarea';
+      contentInput.value = state.noteDraft.content;
+      contentInput.addEventListener('input', (event) => {
+        state.noteDraft.content = event.target.value;
+      });
+      contentField.append(contentInput);
+
+      const actions = document.createElement('div');
+      actions.className = 'note-actions';
+
+      const saveButton = document.createElement('button');
+      saveButton.type = 'button';
+      saveButton.className = 'primary-button';
+      saveButton.textContent = 'Сохранить';
+      saveButton.addEventListener('click', () => saveEditedNote(note.id));
+
+      const cancelButton = document.createElement('button');
+      cancelButton.type = 'button';
+      cancelButton.className = 'ghost-button';
+      cancelButton.textContent = 'Отмена';
+      cancelButton.addEventListener('click', cancelEditingNote);
+
+      actions.append(saveButton, cancelButton);
+      item.append(titleField, contentField, actions);
+      refs.notesList.append(item);
+      return;
+    }
+
+    const meta = document.createElement('div');
+    meta.className = 'note-meta';
+
+    const titleBox = document.createElement('div');
+    const title = document.createElement('h3');
+    title.textContent = note.title;
+    const updated = document.createElement('p');
+    updated.className = 'muted small';
+    updated.textContent = `Обновлено: ${formatDateTime(note.updatedAt || note.createdAt)}`;
+    titleBox.append(title, updated);
+
+    const actions = document.createElement('div');
+    actions.className = 'note-actions';
+
+    const editButton = document.createElement('button');
+    editButton.type = 'button';
+    editButton.className = 'secondary-button';
+    editButton.textContent = 'Редактировать';
+    editButton.addEventListener('click', () => startEditingNote(note.id));
+
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'ghost-button';
+    deleteButton.textContent = 'Удалить';
+    deleteButton.addEventListener('click', () => deleteNote(note.id));
+
+    actions.append(editButton, deleteButton);
+    meta.append(titleBox, actions);
+
+    const content = document.createElement('p');
+    content.className = 'note-content';
+    content.textContent = note.content;
+
+    item.append(meta, content);
+    refs.notesList.append(item);
+  });
+}
+
 function getFrequencyByCellId(cellId) {
-  const [bandKey, channelNumber] = cellId.split('-');
-  const band = BANDS.find((item) => item.key === bandKey);
+  const [bandKey, channelNumber] = String(cellId || '').split('-');
+  const band = state.bands.find((item) => item.key === bandKey);
   return band?.channels?.[Number(channelNumber) - 1] ?? '';
 }
 
@@ -712,5 +1286,5 @@ function showMessage(text, kind = 'success') {
   messageTimer = window.setTimeout(() => {
     refs.actionMessage.hidden = true;
     refs.actionMessage.textContent = '';
-  }, 2600);
+  }, 3200);
 }

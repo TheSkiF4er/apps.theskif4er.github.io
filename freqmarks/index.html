@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Частотные отметки</title>
-  <link rel="stylesheet" href="./styles.css?v=20260319b" />
+  <link rel="stylesheet" href="./styles.css?v=20260320a" />
 </head>
 <body data-screen="login">
   <main class="page-shell">
@@ -31,7 +31,7 @@
         </div>
         <h1 id="page-title" data-app-title>Частотные отметки</h1>
         <p class="muted">
-          Чтобы открыть таблицу, введите пароль страницы. После входа отметки и легенда цветов будут синхронизироваться через онлайн-базу.
+          Чтобы открыть таблицу, введите пароль страницы. После входа отметки, частоты, заметки и легенда цветов будут синхронизироваться через онлайн-базу.
         </p>
 
         <form id="login-form" class="stack gap-16">
@@ -43,6 +43,9 @@
         </form>
 
         <p id="login-error" class="inline-message error" hidden></p>
+        <p class="muted small">
+          По умолчанию в SQL-файле уже задан пароль <code>fpv58</code>. Его можно заменить.
+        </p>
       </div>
     </section>
 
@@ -92,6 +95,34 @@
         </article>
       </section>
 
+      <section class="panel-card frequency-panel">
+        <div class="section-heading">
+          <div>
+            <h2>Частоты</h2>
+            <p id="frequency-summary" class="muted small">Минимальный шаг между частотами хранится в базе и применяется при сохранении.</p>
+          </div>
+          <div class="header-actions compact-actions">
+            <button id="edit-frequencies-button" class="secondary-button" type="button">Редактировать частоты</button>
+            <button id="save-frequencies-button" class="primary-button" type="button" hidden>Сохранить частоты</button>
+            <button id="cancel-frequencies-button" class="ghost-button" type="button" hidden>Отмена</button>
+          </div>
+        </div>
+
+        <div class="frequency-toolbar">
+          <label class="field frequency-gap-field">
+            <span class="field-label">Минимальный шаг между частотами</span>
+            <input id="min-gap-input" class="text-input" type="number" min="100" step="1" value="100" disabled />
+          </label>
+          <p class="muted small frequency-help">
+            Значение меньше 100 сохранить нельзя. Пустые ячейки и слишком близкие частоты не пройдут проверку.
+          </p>
+        </div>
+
+        <div id="frequency-editor" class="frequency-editor" hidden>
+          <div id="frequency-band-editor" class="frequency-band-editor"></div>
+        </div>
+      </section>
+
       <section class="panel-card table-panel desktop-only">
         <div class="section-heading">
           <h2>Таблица каналов</h2>
@@ -126,6 +157,34 @@
         <p id="legend-empty" class="muted">Пока нет подписей. Выберите цвет, введите текст и нажмите «Сохранить».</p>
       </section>
 
+      <section class="panel-card notes-panel">
+        <div class="section-heading">
+          <div>
+            <h2>Заметки</h2>
+            <p class="muted small">Новые заметки сохраняются в базу. Существующие можно редактировать и удалять.</p>
+          </div>
+        </div>
+
+        <div class="notes-form stack gap-16">
+          <label class="field">
+            <span class="field-label">Заголовок заметки</span>
+            <input id="note-title-input" class="text-input" type="text" placeholder="Например: Подготовка к выезду" />
+          </label>
+
+          <label class="field">
+            <span class="field-label">Текст заметки</span>
+            <textarea id="note-text-input" class="text-input note-textarea" placeholder="Введите текст заметки"></textarea>
+          </label>
+
+          <div class="legend-add-row">
+            <button id="add-note-button" class="primary-button" type="button">Сохранить заметку</button>
+          </div>
+        </div>
+
+        <div id="notes-list" class="notes-list"></div>
+        <p id="notes-empty" class="muted">Пока нет заметок.</p>
+      </section>
+
       <p id="action-message" class="inline-message" hidden></p>
 
       <footer class="site-footer panel-card">
@@ -134,13 +193,12 @@
             <strong id="footer-title" class="site-footer__title" data-app-title>Частотные отметки</strong>
             <p class="muted small">Общая таблица частот с цветными отметками.</p>
           </div>
-          <p class="muted small site-footer__meta">Данные и легенда синхронизируются между устройствами через Supabase.</p>
-          <p class="muted small site-footer__meta">Разработано и спроектировано <a href="https://github.com/TheSkiF4er">SkiF4er</a>.</p>
+          <p class="muted small site-footer__meta">Данные, частоты, заметки и легенда синхронизируются между устройствами через Supabase.</p>
         </div>
       </footer>
     </section>
   </main>
 
-  <script type="module" src="./app.js?v=20260319b"></script>
+  <script type="module" src="./app.js?v=20260320a"></script>
 </body>
 </html>
