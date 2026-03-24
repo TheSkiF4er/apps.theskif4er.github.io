@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Частотные отметки</title>
-  <link rel="stylesheet" href="./styles.css?v=20260320b" />
+  <link rel="stylesheet" href="./styles.css?v=20260324a" />
 </head>
 <body data-screen="login">
   <main class="page-shell">
@@ -43,6 +43,9 @@
         </form>
 
         <p id="login-error" class="inline-message error" hidden></p>
+        <p class="muted small">
+          По умолчанию в SQL-файле заданы ключи: администратор <code>fpv58</code>, пользователь <code>fpv29</code>. Их можно заменить.
+        </p>
       </div>
     </section>
 
@@ -89,7 +92,7 @@
             <button id="add-legend-button" class="primary-button" type="button">Сохранить</button>
           </div>
           <p class="muted small">
-            Под таблицей можно менять и удалять подписи цветов. Изменения синхронизируются. В режиме пользователя доступен только просмотр.
+            После сохранения подписи ниже в легенде можно вести таблицу «Название модели — номер» для каждого цвета. Изменения синхронизируются. В режиме пользователя доступен только просмотр.
           </p>
         </article>
       </section>
@@ -198,6 +201,6 @@
     </section>
   </main>
 
-  <script type="module" src="./app.js?v=20260320b"></script>
+  <script type="module" src="./app.js?v=20260324a"></script>
 </body>
 </html>

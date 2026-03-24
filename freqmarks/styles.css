@@ -521,13 +521,18 @@ textarea.text-input {
 
 .legend-item {
   display: grid;
-  grid-template-columns: auto 110px minmax(180px, 1fr) auto auto;
-  gap: 12px;
-  align-items: center;
+  gap: 14px;
   padding: 14px;
   border-radius: 16px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.04);
+}
+
+.legend-item__top {
+  display: grid;
+  grid-template-columns: auto 110px minmax(220px, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
 }
 
 .legend-color-box {
@@ -541,6 +546,80 @@ textarea.text-input {
   color: var(--muted);
   font-size: 13px;
   letter-spacing: 0.05em;
+}
+
+.legend-models {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.legend-models__header {
+  display: grid;
+  gap: 4px;
+}
+
+.legend-models__title {
+  margin-bottom: 0;
+  font-size: 16px;
+}
+
+.legend-models__header p {
+  margin-bottom: 0;
+}
+
+.legend-models__table-wrap {
+  overflow-x: auto;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.legend-models-table {
+  width: 100%;
+  min-width: 420px;
+  border-collapse: collapse;
+}
+
+.legend-models-table th,
+.legend-models-table td {
+  padding: 12px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  vertical-align: top;
+}
+
+.legend-models-table thead th {
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.legend-models-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.legend-model-input {
+  min-width: 160px;
+}
+
+.legend-model-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.legend-models__form {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(160px, 0.8fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.legend-models-empty {
+  margin-bottom: 0;
 }
 
 .notes-form {
@@ -629,15 +708,19 @@ textarea.text-input {
     flex-direction: column;
   }
 
-  .legend-item {
+  .legend-item__top {
     grid-template-columns: 44px 1fr;
   }
 
-  .legend-item .legend-code,
-  .legend-item .text-input,
-  .legend-item .secondary-button,
-  .legend-item .ghost-button {
+  .legend-item__top .legend-code,
+  .legend-item__top .text-input,
+  .legend-item__top .secondary-button,
+  .legend-item__top .ghost-button {
     grid-column: 1 / -1;
+  }
+
+  .legend-models__form {
+    grid-template-columns: 1fr;
   }
 
   .frequency-toolbar {
@@ -705,6 +788,11 @@ textarea.text-input {
   .color-row > .text-input,
   .color-row > .current-color-preview,
   .compact-actions > * {
+    width: 100%;
+  }
+
+  .legend-model-actions > *,
+  .legend-models__form > * {
     width: 100%;
   }
 

@@ -25,6 +25,7 @@ const state = {
   selectedColor: DEFAULT_COLOR,
   marks: {},
   legend: {},
+  legendModels: {},
   bands: cloneBands(DEFAULT_BANDS),
   settings: {
     minFrequencyGap: 100,
@@ -363,6 +364,7 @@ function bindEvents() {
     unsubscribeRealtime();
     state.marks = {};
     state.legend = {};
+    state.legendModels = {};
     state.notes = [];
     state.editingFrequencies = false;
     state.editingNoteId = null;
@@ -562,7 +564,7 @@ async function enterApp() {
   applyAppTitle();
 
   try {
-    await Promise.all([loadChannels(), loadSettings(), loadMarks(), loadLegend(), loadNotes()]);
+    await Promise.all([loadChannels(), loadSettings(), loadMarks(), loadLegend(), loadLegendModels(), loadNotes()]);
     rebuildFrequencyViews();
     renderAll();
     subscribeRealtime();
@@ -644,6 +646,29 @@ async function loadLegend() {
   });
 }
 
+async function loadLegendModels() {
+  const { data, error } = await state.supabase
+    .from('legend_models')
+    .select('id, color, model_name, model_number, sort_order')
+    .order('color', { ascending: true })
+    .order('sort_order', { ascending: true })
+    .order('id', { ascending: true });
+
+  if (error) throw error;
+
+  state.legendModels = {};
+  (data || []).forEach((item) => {
+    const color = normalizeHex(item.color);
+    if (!color) return;
+
+    if (!state.legendModels[color]) {
+      state.legendModels[color] = [];
+    }
+
+    state.legendModels[color].push(mapLegendModel(item));
+  });
+}
+
 async function loadNotes() {
   const { data, error } = await state.supabase
     .from('notes')
@@ -681,6 +706,15 @@ function subscribeRealtime() {
     })
     .subscribe(handleRealtimeStatus);
 
+  const legendModelsChannel = state.supabase
+    .channel('fpv-legend-models')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'legend_models' }, async () => {
+      await loadLegendModels();
+      renderLegend();
+      renderMarks();
+    })
+    .subscribe(handleRealtimeStatus);
+
   const frequencyChannel = state.supabase
     .channel('fpv-band-channels')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'band_channels' }, async () => {
@@ -708,7 +742,7 @@ function subscribeRealtime() {
     })
     .subscribe(handleRealtimeStatus);
 
-  state.channels = [marksChannel, legendChannel, frequencyChannel, settingsChannel, notesChannel];
+  state.channels = [marksChannel, legendChannel, legendModelsChannel, frequencyChannel, settingsChannel, notesChannel];
 }
 
 function unsubscribeRealtime() {
@@ -801,6 +835,7 @@ async function saveLegendFromForm() {
 
     state.legend[color] = label;
     refs.legendText.value = '';
+    setSelectedColor(color);
     renderLegend();
     renderMarks();
     showMessage('Легенда сохранена.', 'success');
@@ -833,6 +868,7 @@ async function saveLegend(color, label) {
 
     if (error) throw error;
     state.legend[normalizedColor] = preparedLabel;
+    setSelectedColor(normalizedColor);
     renderLegend();
     renderMarks();
     showMessage('Подпись обновлена.', 'success');
@@ -853,6 +889,8 @@ async function deleteLegend(color) {
 
     if (error) throw error;
     delete state.legend[color];
+    delete state.legendModels[color];
+    setSelectedColor(state.selectedColor);
     renderLegend();
     renderMarks();
     showMessage('Подпись удалена.', 'success');
@@ -873,6 +911,8 @@ async function clearLegend() {
 
     if (error) throw error;
     state.legend = {};
+    state.legendModels = {};
+    setSelectedColor(state.selectedColor);
     renderLegend();
     renderMarks();
     showMessage('Легенда очищена.', 'success');
@@ -1235,13 +1275,69 @@ function renderAll() {
   renderNotes();
 }
 
+function mapLegendModel(item) {
+  return {
+    id: item.id,
+    modelName: String(item.model_name || ''),
+    modelNumber: String(item.model_number || ''),
+    sortOrder: Number.isFinite(Number(item.sort_order)) ? Number(item.sort_order) : 0,
+  };
+}
+
+function getLegendModels(color) {
+  const normalizedColor = normalizeHex(color);
+  return normalizedColor ? [...(state.legendModels[normalizedColor] || [])] : [];
+}
+
+function buildLegendModelsSummary(color) {
+  return getLegendModels(color)
+    .map((item) => `${item.modelName} — ${item.modelNumber}`)
+    .join('\n');
+}
+
+function upsertLegendModelState(color, model) {
+  const normalizedColor = normalizeHex(color);
+  if (!normalizedColor || !model?.id) return;
+
+  const bucket = state.legendModels[normalizedColor] ? [...state.legendModels[normalizedColor]] : [];
+  const nextModel = {
+    id: model.id,
+    modelName: String(model.modelName || ''),
+    modelNumber: String(model.modelNumber || ''),
+    sortOrder: Number.isFinite(Number(model.sortOrder)) ? Number(model.sortOrder) : 0,
+  };
+  const existingIndex = bucket.findIndex((item) => item.id === nextModel.id);
+
+  if (existingIndex >= 0) {
+    bucket[existingIndex] = nextModel;
+  } else {
+    bucket.push(nextModel);
+  }
+
+  bucket.sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id);
+  state.legendModels[normalizedColor] = bucket;
+}
+
+function removeLegendModelState(color, modelId) {
+  const normalizedColor = normalizeHex(color);
+  if (!normalizedColor) return;
+
+  const bucket = (state.legendModels[normalizedColor] || []).filter((item) => item.id !== modelId);
+  if (bucket.length) {
+    state.legendModels[normalizedColor] = bucket;
+  } else {
+    delete state.legendModels[normalizedColor];
+  }
+}
+
 function renderMarks() {
   state.cellNodes.forEach((nodes, cellId) => {
     const color = state.marks[cellId];
     const label = color ? state.legend[color] : '';
     const frequency = getFrequencyByCellId(cellId);
     const textColor = color ? getReadableTextColor(color) : '';
-    const title = label ? `${frequency} — ${label}` : String(frequency);
+    const modelsSummary = color ? buildLegendModelsSummary(color) : '';
+    const title = [label ? `${frequency} — ${label}` : String(frequency), modelsSummary].filter(Boolean).join('\n');
 
     nodes.forEach((node) => {
       node.title = title;
@@ -1271,6 +1367,9 @@ function renderLegend() {
     const item = document.createElement('div');
     item.className = 'legend-item';
 
+    const top = document.createElement('div');
+    top.className = 'legend-item__top';
+
     const colorButton = document.createElement('button');
     colorButton.type = 'button';
     colorButton.className = 'legend-color-box';
@@ -1281,49 +1380,319 @@ function renderLegend() {
       if (!admin) return;
       setSelectedColor(color);
       refs.legendText.value = label;
+      refs.legendText.focus();
     });
 
     const code = document.createElement('div');
     code.className = 'legend-code';
     code.textContent = color;
 
+    top.append(colorButton, code);
+
     if (!admin) {
       const readonlyLabel = document.createElement('div');
       readonlyLabel.className = 'legend-label-text';
       readonlyLabel.textContent = label;
-      item.append(colorButton, code, readonlyLabel);
-      refs.legendList.append(item);
-      return;
+      top.append(readonlyLabel);
+    } else {
+      const input = document.createElement('input');
+      input.className = 'text-input';
+      input.type = 'text';
+      input.value = label;
+      input.placeholder = 'Подпись цвета';
+
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          saveLegend(color, input.value);
+        }
+      });
+
+      const saveButton = document.createElement('button');
+      saveButton.type = 'button';
+      saveButton.className = 'secondary-button';
+      saveButton.textContent = 'Сохранить';
+      saveButton.addEventListener('click', () => saveLegend(color, input.value));
+
+      const deleteButton = document.createElement('button');
+      deleteButton.type = 'button';
+      deleteButton.className = 'ghost-button';
+      deleteButton.textContent = 'Удалить';
+      deleteButton.addEventListener('click', () => deleteLegend(color));
+
+      top.append(input, saveButton, deleteButton);
     }
 
-    const input = document.createElement('input');
-    input.className = 'text-input';
-    input.type = 'text';
-    input.value = label;
-    input.placeholder = 'Подпись цвета';
+    const modelsSection = document.createElement('div');
+    modelsSection.className = 'legend-models';
 
-    input.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        saveLegend(color, input.value);
+    const modelsHeader = document.createElement('div');
+    modelsHeader.className = 'legend-models__header';
+
+    const modelsTitle = document.createElement('h3');
+    modelsTitle.className = 'legend-models__title';
+    modelsTitle.textContent = 'Модели для этого цвета';
+
+    const modelsHint = document.createElement('p');
+    modelsHint.className = 'muted small';
+    modelsHint.textContent = admin
+      ? 'Добавляйте пары «Название модели — номер». Их увидят все пользователи.'
+      : 'Список моделей и номеров для выбранного цвета.';
+
+    modelsHeader.append(modelsTitle, modelsHint);
+
+    const models = getLegendModels(color);
+
+    if (models.length) {
+      const tableWrap = document.createElement('div');
+      tableWrap.className = 'legend-models__table-wrap';
+
+      const table = document.createElement('table');
+      table.className = 'legend-models-table';
+
+      const head = document.createElement('thead');
+      const headRow = document.createElement('tr');
+      ['Название модели', 'Номер'].forEach((titleText) => {
+        const th = document.createElement('th');
+        th.textContent = titleText;
+        headRow.append(th);
+      });
+
+      if (admin) {
+        const actionsHead = document.createElement('th');
+        actionsHead.textContent = 'Действия';
+        headRow.append(actionsHead);
       }
-    });
 
-    const saveButton = document.createElement('button');
-    saveButton.type = 'button';
-    saveButton.className = 'secondary-button';
-    saveButton.textContent = 'Сохранить';
-    saveButton.addEventListener('click', () => saveLegend(color, input.value));
+      head.append(headRow);
+      table.append(head);
 
-    const deleteButton = document.createElement('button');
-    deleteButton.type = 'button';
-    deleteButton.className = 'ghost-button';
-    deleteButton.textContent = 'Удалить';
-    deleteButton.addEventListener('click', () => deleteLegend(color));
+      const body = document.createElement('tbody');
+      models.forEach((model) => {
+        const row = document.createElement('tr');
 
-    item.append(colorButton, code, input, saveButton, deleteButton);
+        if (admin) {
+          const nameCell = document.createElement('td');
+          const nameInput = document.createElement('input');
+          nameInput.type = 'text';
+          nameInput.className = 'text-input legend-model-input';
+          nameInput.value = model.modelName;
+          nameInput.placeholder = 'Название модели';
+          nameCell.append(nameInput);
+
+          const numberCell = document.createElement('td');
+          const numberInput = document.createElement('input');
+          numberInput.type = 'text';
+          numberInput.className = 'text-input legend-model-input';
+          numberInput.value = model.modelNumber;
+          numberInput.placeholder = 'Номер';
+          numberInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              updateLegendModel(model.id, color, nameInput.value, numberInput.value, model.sortOrder);
+            }
+          });
+          numberCell.append(numberInput);
+
+          const actionsCell = document.createElement('td');
+          const actions = document.createElement('div');
+          actions.className = 'legend-model-actions';
+
+          const saveButton = document.createElement('button');
+          saveButton.type = 'button';
+          saveButton.className = 'secondary-button';
+          saveButton.textContent = 'Сохранить';
+          saveButton.addEventListener('click', () => updateLegendModel(model.id, color, nameInput.value, numberInput.value, model.sortOrder));
+
+          const deleteButton = document.createElement('button');
+          deleteButton.type = 'button';
+          deleteButton.className = 'ghost-button';
+          deleteButton.textContent = 'Удалить';
+          deleteButton.addEventListener('click', () => deleteLegendModel(model.id, color));
+
+          actions.append(saveButton, deleteButton);
+          actionsCell.append(actions);
+          row.append(nameCell, numberCell, actionsCell);
+        } else {
+          const nameCell = document.createElement('td');
+          nameCell.textContent = model.modelName;
+          const numberCell = document.createElement('td');
+          numberCell.textContent = model.modelNumber;
+          row.append(nameCell, numberCell);
+        }
+
+        body.append(row);
+      });
+
+      table.append(body);
+      tableWrap.append(table);
+      modelsSection.append(modelsHeader, tableWrap);
+    } else {
+      const empty = document.createElement('p');
+      empty.className = 'muted small legend-models-empty';
+      empty.textContent = 'Для этого цвета пока нет добавленных моделей.';
+      modelsSection.append(modelsHeader, empty);
+    }
+
+    if (admin) {
+      const addForm = document.createElement('div');
+      addForm.className = 'legend-models__form';
+
+      const nameInput = document.createElement('input');
+      nameInput.type = 'text';
+      nameInput.className = 'text-input';
+      nameInput.placeholder = 'Название модели';
+
+      const numberInput = document.createElement('input');
+      numberInput.type = 'text';
+      numberInput.className = 'text-input';
+      numberInput.placeholder = 'Номер';
+
+      const addButton = document.createElement('button');
+      addButton.type = 'button';
+      addButton.className = 'primary-button';
+      addButton.textContent = 'Добавить модель';
+
+      const handleAdd = async () => {
+        const saved = await addLegendModel(color, nameInput.value, numberInput.value);
+        if (saved) {
+          nameInput.value = '';
+          numberInput.value = '';
+          nameInput.focus();
+        }
+      };
+
+      addButton.addEventListener('click', handleAdd);
+      numberInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          handleAdd();
+        }
+      });
+
+      addForm.append(nameInput, numberInput, addButton);
+      modelsSection.append(addForm);
+    }
+
+    item.append(top, modelsSection);
     refs.legendList.append(item);
   });
+}
+
+async function addLegendModel(color, modelName, modelNumber) {
+  if (!requireAdminAccess()) return false;
+
+  const normalizedColor = normalizeHex(color);
+  const preparedName = String(modelName || '').trim();
+  const preparedNumber = String(modelNumber || '').trim();
+
+  if (!normalizedColor || !state.legend[normalizedColor]) {
+    showMessage('Сначала сохраните подпись для выбранного цвета.', 'error');
+    return false;
+  }
+
+  if (!preparedName || !preparedNumber) {
+    showMessage('Заполните название модели и номер.', 'error');
+    return false;
+  }
+
+  const existingModels = getLegendModels(normalizedColor);
+  const lastSortOrder = existingModels.length ? existingModels[existingModels.length - 1].sortOrder : -1;
+
+  try {
+    const { data, error } = await state.adminSupabase
+      .from('legend_models')
+      .insert({
+        color: normalizedColor,
+        model_name: preparedName,
+        model_number: preparedNumber,
+        sort_order: lastSortOrder + 1,
+      })
+      .select('id, color, model_name, model_number, sort_order')
+      .single();
+
+    if (error) throw error;
+
+    const savedColor = normalizeHex(data.color) || normalizedColor;
+    upsertLegendModelState(savedColor, mapLegendModel(data));
+    renderLegend();
+    renderMarks();
+    showMessage('Модель добавлена.', 'success');
+    return true;
+  } catch (error) {
+    console.error(error);
+    showMessage('Не удалось добавить модель.', 'error');
+    return false;
+  }
+}
+
+async function updateLegendModel(modelId, color, modelName, modelNumber, sortOrder = 0) {
+  if (!requireAdminAccess()) return false;
+
+  const normalizedColor = normalizeHex(color);
+  const preparedName = String(modelName || '').trim();
+  const preparedNumber = String(modelNumber || '').trim();
+
+  if (!normalizedColor || !modelId) {
+    showMessage('Не удалось определить запись модели.', 'error');
+    return false;
+  }
+
+  if (!preparedName || !preparedNumber) {
+    showMessage('Заполните название модели и номер.', 'error');
+    return false;
+  }
+
+  try {
+    const { error } = await state.adminSupabase
+      .from('legend_models')
+      .update({
+        model_name: preparedName,
+        model_number: preparedNumber,
+        sort_order: Number.isFinite(Number(sortOrder)) ? Number(sortOrder) : 0,
+      })
+      .eq('id', modelId);
+
+    if (error) throw error;
+
+    upsertLegendModelState(normalizedColor, {
+      id: modelId,
+      modelName: preparedName,
+      modelNumber: preparedNumber,
+      sortOrder,
+    });
+    renderLegend();
+    renderMarks();
+    showMessage('Модель обновлена.', 'success');
+    return true;
+  } catch (error) {
+    console.error(error);
+    showMessage('Не удалось обновить модель.', 'error');
+    return false;
+  }
+}
+
+async function deleteLegendModel(modelId, color) {
+  if (!requireAdminAccess()) return false;
+
+  try {
+    const { error } = await state.adminSupabase
+      .from('legend_models')
+      .delete()
+      .eq('id', modelId);
+
+    if (error) throw error;
+
+    removeLegendModelState(color, modelId);
+    renderLegend();
+    renderMarks();
+    showMessage('Модель удалена.', 'success');
+    return true;
+  } catch (error) {
+    console.error(error);
+    showMessage('Не удалось удалить модель.', 'error');
+    return false;
+  }
 }
 
 function renderNotes() {
